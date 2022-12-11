@@ -1,0 +1,180 @@
+#include <ESP8266WiFi.h>
+#include "Adafruit_MQTT.h"
+#include "Adafruit_MQTT_Client.h"
+#include "DHT.h"
+#include "AdafruitIO_WiFi.h"
+#include <Wire.h>
+
+
+#define WLAN_SSID       "Totalplay-16AA-5G"
+#define WLAN_PASS       "16AAB1726r7MYFqQ"
+
+/********* Adafruit.io Setup ***********/
+
+#define AIO_SERVER      "io.adafruit.com"
+#define AIO_SERVERPORT  1883                   // use 8883 for SSL
+#define IO_USERNAME  "Nava"
+#define IO_KEY       "aio_ERHd16ee51DxnmEx9NZhVjIu15Cp"
+
+/**** Global State  ******/
+
+// Create an ESP8266 WiFiClient class to connect to the MQTT server.
+WiFiClient client;
+// or... use WiFiFlientSecure for SSL
+//WiFiClientSecure client;
+
+// Setup the MQTT client class by passing in the WiFi client and MQTT server and login details.
+Adafruit_MQTT_Client mqtt(&client, AIO_SERVER, AIO_SERVERPORT, IO_USERNAME, IO_KEY);
+
+/********** Feeds *************/
+
+// Setup a feed called 'potValue' for publishing.
+// Notice MQTT paths for AIO follow the form: <username>/feeds/<feedname>
+Adafruit_MQTT_Publish distancia = Adafruit_MQTT_Publish(&mqtt, IO_USERNAME "/feeds/distvalue");
+Adafruit_MQTT_Publish humedad = Adafruit_MQTT_Publish(&mqtt, IO_USERNAME "/feeds/humedad");
+Adafruit_MQTT_Publish temperatura = Adafruit_MQTT_Publish(&mqtt, IO_USERNAME "/feeds/temperatura");
+
+// Setup a feed called 'ledBrightness' for subscribing to changes.
+Adafruit_MQTT_Subscribe led = Adafruit_MQTT_Subscribe(&mqtt, IO_USERNAME "/feeds/led");
+
+/********* Sketch Code ************/
+
+// Bug workaround for Arduino 1.6.6, it seems to need a function declaration
+// for some reason (only affects ESP8266, likely an arduino-builder bug).
+//definir los pines dht
+#define DHTPIN D8
+#define DHTTYPE DHT11
+DHT dht(DHTPIN, DHTTYPE);
+
+int cm = 0;
+int tiempoUltimaLectura = millis();
+int distanciaValor = 0;
+byte I2C;
+//float temperaturaValor = 0;
+//float humedadValor = 0;
+
+
+void MQTT_connect();
+
+void setup() {
+    Serial.begin(115200);
+    dht.begin();
+    delay(10);
+    //pinMode(Trigger, OUTPUT); //pin como salida
+    //pinMode(Echo, INPUT);  //pin como entrada
+    //digitalWrite(Trigger, LOW);//Inicializamos el pin con 0
+
+    pinMode(D4,OUTPUT);
+
+    Serial.println(F("Adafruit MQTT demo"));
+
+    // Connect to WiFi access point.
+    Serial.println(); 
+    Serial.println();
+
+    Serial.print("Connecting to ");
+    Serial.println(WLAN_SSID);
+    WiFi.begin(WLAN_SSID, WLAN_PASS);
+
+    Serial.println();
+
+    //iniciar conexión WiFi
+    WiFi.begin(WLAN_SSID, WLAN_PASS);
+    while (WiFi.status() != WL_CONNECTED) 
+    {
+        delay(500);
+        Serial.print(".");
+    }
+
+    Serial.println();
+    Serial.println("WiFi connected");
+    Serial.println("IP address: "); 
+    Serial.println(WiFi.localIP());
+
+    // Setup MQTT subscription for ledBrightness feed.
+    // Setup MQTT subscription for ledBrightness feed.
+    mqtt.subscribe(&led);
+
+
+    Wire.begin(1);
+}
+
+void loop() {
+    MQTT_connect();
+
+    Adafruit_MQTT_Subscribe *subscription;
+    while ((subscription = mqtt.readSubscription(4000))) 
+    {
+        if (subscription == &led) 
+        {
+            Serial.print(F("Got LED: "));
+            Serial.println((char *)led.lastread);
+
+            String message = String((char *)led.lastread);
+            //message.trim();
+
+            if(message == "1") {digitalWrite(D4, LOW); }
+            if(message == "0") {digitalWrite(D4, HIGH); }
+        }
+
+        if(millis() - tiempoUltimaLectura > 2000)
+        {
+            distanciaValor = Wire.read();
+            if (! distancia.publish(distanciaValor)) 
+            {
+                Serial.println(F("Distancia fallida"));
+            } else {
+                Serial.println(F("Distancia correcta"));
+                Serial.print("distancia:");
+                Serial.println(distanciaValor);
+                
+            }  
+            tiempoUltimaLectura = millis();
+        }
+        delay(2000);
+    }
+
+}
+
+// long leerDistancia(int triggerPin, int echoPin)
+// {
+//     pinMode(triggerPin, OUTPUT);
+//     digitalWrite(triggerPin, LOW);
+//     delayMicroseconds(2);
+
+//     digitalWrite(triggerPin, HIGH);
+//     delayMicroseconds(10);
+//     digitalWrite(triggerPin, LOW);
+//     pinMode(echoPin, INPUT);
+
+//     cm = pulseIn(echoPin, HIGH)*0.01723;
+
+//     return cm;
+// }  
+
+void MQTT_connect() {
+    int8_t ret;
+
+    // Stop if already connected.
+    if (mqtt.connected()) {
+    return;
+    }
+
+    Serial.print("Connecting to MQTT... ");
+
+    uint8_t retries = 3;
+    while ((ret = mqtt.connect()) != 0) 
+    { 
+        // connect will return 0 for connected
+        Serial.println(mqtt.connectErrorString(ret));
+        Serial.println("Retrying MQTT connection in 5 seconds...");
+        mqtt.disconnect();
+        delay(5000);  // wait 5 seconds
+        retries--;
+        if (retries == 0) {
+            // basically die and wait for WDT to reset me
+            while (1);
+        }
+    }
+    Serial.println("MQTT Connected!");
+}
